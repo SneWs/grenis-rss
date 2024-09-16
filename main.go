@@ -76,13 +76,8 @@ func create_default_config() {
 	defer config_file.Close()
 
 	var feed_config = FeedConfig{
-		FeedItems: []FeedItem{
-			{
-				Name:    "Example",
-				FeedURL: "https://somefeed.com/rss.xml",
-			},
-		},
-		Path: "~/Podcasts",
+		FeedItems: []FeedItem{},
+		Path:      "~/Podcasts",
 	}
 
 	config_bytes, err := json.Marshal(feed_config)
@@ -91,6 +86,22 @@ func create_default_config() {
 	}
 
 	config_file.Write(config_bytes)
+}
+
+func makeAbsolute(path string) string {
+	home_dir, err := os.UserHomeDir()
+	if err != nil {
+		panic(err)
+	}
+
+	if path == "~" {
+		path = home_dir
+	}
+	if strings.HasPrefix(path, "~/") {
+		path = filepath.Join(home_dir, path[2:])
+	}
+
+	return path
 }
 
 func basic_sanitize_filename(filename string) string {
@@ -116,6 +127,11 @@ func process_feed_url(save_path string, feed_url string, max_items int) {
 
 	if err != nil {
 		fmt.Println("Failed to parse feed:", feed_url, "Error:", err)
+	}
+
+	if feed == nil {
+		fmt.Println("Failed to parse feed URL:", feed_url)
+		return
 	}
 
 	var count int = 0
@@ -207,8 +223,13 @@ func main() {
 		return
 	}
 
+	feedPath := makeAbsolute(feed_config.Path)
+
 	// Make sure our output root exists
-	os.MkdirAll(feed_config.Path, os.FileMode.Perm(0755))
+	err = os.MkdirAll(feedPath, os.FileMode.Perm(0755))
+	if err != nil {
+		panic(err)
+	}
 
 	if len(feed_config.FeedItems) < 1 {
 		fmt.Println("No feeds configured")
@@ -222,7 +243,7 @@ func main() {
 		wg.Add(1)
 
 		fmt.Println("Starting to process feed:", feed_item.Name)
-		folder_name := feed_config.Path + "/" + feed_item.Name
+		folder_name := feedPath + "/" + feed_item.Name
 		os.MkdirAll(folder_name, os.FileMode.Perm(0755))
 
 		go func(url string, items int) {
