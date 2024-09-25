@@ -1,6 +1,6 @@
 module main
 
-go 1.21.6
+go 1.23
 
 require github.com/mmcdole/gofeed v1.2.1
 
