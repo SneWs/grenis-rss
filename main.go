@@ -25,86 +25,94 @@ type FeedItem struct {
 	FeedURL string `json:"feed_url"`
 }
 
-func get_config_dir() string {
-	home_dir, err := os.UserHomeDir()
+func getConfigDir() string {
+	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		panic(err)
 	}
 
-	config_folder := home_dir + "/.config/grenis-rss"
-	os.MkdirAll(config_folder, os.FileMode.Perm(0755))
+	configFolder := homeDir + "/.config/grenis-rss"
+	_ = os.MkdirAll(configFolder, os.FileMode.Perm(0755))
 
-	return config_folder
+	return configFolder
 }
 
-func get_config_file() string {
-	config_folder := get_config_dir()
-	return config_folder + "/config.json"
+func getConfigFile() string {
+	configFolder := getConfigDir()
+	return configFolder + "/config.json"
 }
 
-func read_feeds_config() (*FeedConfig, error) {
-	config_filename := get_config_file()
-	config_file, err := os.Open(config_filename)
+func readFeedsConfig() (*FeedConfig, error) {
+	configFilename := getConfigFile()
+	configFile, err := os.Open(configFilename)
 	if err != nil {
 		return nil, err
 	}
-	defer config_file.Close()
 
-	config_bytes, err := io.ReadAll(config_file)
+	defer func(configFile *os.File) {
+		_ = configFile.Close()
+	}(configFile)
+
+	configBytes, err := io.ReadAll(configFile)
 	if err != nil {
 		panic(err)
 	}
 
-	var feed_config = FeedConfig{}
-	json.Unmarshal(config_bytes, &feed_config)
+	var feedConfig = FeedConfig{}
+	err = json.Unmarshal(configBytes, &feedConfig)
+	if err != nil {
+		return nil, err
+	}
 
-	return &feed_config, nil
+	return &feedConfig, nil
 }
 
-func create_default_config() {
-	config_filename := get_config_file()
+func createDefaultConfig() {
+	configFilename := getConfigFile()
 
 	// Check if file exists, and if it does, don't overwrite it
-	if _, err := os.Stat(config_filename); err == nil {
+	if _, err := os.Stat(configFilename); err == nil {
 		return
 	}
 
-	config_file, err := os.Create(config_filename)
+	configFile, err := os.Create(configFilename)
 	if err != nil {
 		panic(err)
 	}
-	defer config_file.Close()
+	defer func(configFile *os.File) {
+		_ = configFile.Close()
+	}(configFile)
 
-	var feed_config = FeedConfig{
+	var feedConfig = FeedConfig{
 		FeedItems: []FeedItem{},
 		Path:      "~/Podcasts",
 	}
 
-	config_bytes, err := json.Marshal(feed_config)
+	configBytes, err := json.Marshal(feedConfig)
 	if err != nil {
 		panic(err)
 	}
 
-	config_file.Write(config_bytes)
+	_, _ = configFile.Write(configBytes)
 }
 
 func makeAbsolute(path string) string {
-	home_dir, err := os.UserHomeDir()
+	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		panic(err)
 	}
 
 	if path == "~" {
-		path = home_dir
+		path = homeDir
 	}
 	if strings.HasPrefix(path, "~/") {
-		path = filepath.Join(home_dir, path[2:])
+		path = filepath.Join(homeDir, path[2:])
 	}
 
 	return path
 }
 
-func basic_sanitize_filename(filename string) string {
+func basicSanitizeFilename(filename string) string {
 	str := strings.Replace(filename, "/", "_", -1)
 	str = strings.Replace(str, ":", "", -1)
 	str = strings.Replace(str, "$", "", -1)
@@ -127,23 +135,23 @@ func basic_sanitize_filename(filename string) string {
 	return str
 }
 
-func process_feed_url(save_path string, feed_url string, max_items int) {
+func processFeedUrl(savePath string, feedUrl string, maxItems int) {
 	fp := feed.NewParser()
-	feed, err := fp.ParseURL(feed_url)
+	parsedUrl, err := fp.ParseURL(feedUrl)
 
 	if err != nil {
-		fmt.Println("Failed to parse feed:", feed_url, "Error:", err)
+		fmt.Println("Failed to parse parsedUrl:", feedUrl, "Error:", err)
 	}
 
-	if feed == nil {
-		fmt.Println("Failed to parse feed URL:", feed_url)
+	if parsedUrl == nil {
+		fmt.Println("Failed to parse parsedUrl URL:", feedUrl)
 		return
 	}
 
-	var count int = 0
-	for _, item := range feed.Items {
+	var count = 0
+	for _, item := range parsedUrl.Items {
 
-		if max_items > 0 && count >= max_items {
+		if maxItems > 0 && count >= maxItems {
 			break
 		}
 
@@ -157,12 +165,15 @@ func process_feed_url(save_path string, feed_url string, max_items int) {
 		r, _ := http.NewRequest("GET", enc.URL, nil)
 		ext := filepath.Ext(path.Base(r.URL.Path))
 
-		local_filename := basic_sanitize_filename(item.Title) + ext
-		filename := save_path + "/" + local_filename
+		localFilename := basicSanitizeFilename(item.Title) + ext
+		filename := savePath + "/" + localFilename
 		file, err := os.Open(filename)
 		if err == nil {
 			// File already exists, skip
-			file.Close()
+			err := file.Close()
+			if err != nil {
+				_ = fmt.Errorf("Failed to close file: %v", err)
+			}
 			continue
 		}
 
@@ -171,7 +182,12 @@ func process_feed_url(save_path string, feed_url string, max_items int) {
 			fmt.Println("Failed to create file for:", filename, "Error:", err)
 			continue
 		}
-		defer file.Close()
+		defer func(file *os.File) {
+			err := file.Close()
+			if err != nil {
+				_ = fmt.Errorf("Failed to close file: %v", err)
+			}
+		}(file)
 
 		resp, err := http.Get(enc.URL)
 		if err != nil {
@@ -179,7 +195,12 @@ func process_feed_url(save_path string, feed_url string, max_items int) {
 			continue
 		}
 
-		defer resp.Body.Close()
+		defer func(Body io.ReadCloser) {
+			err := Body.Close()
+			if err != nil {
+				_ = fmt.Errorf("Failed to close file: %v", err)
+			}
+		}(resp.Body)
 		fmt.Println("Downloading", enc.URL)
 
 		bytes, err := io.Copy(file, resp.Body)
@@ -192,7 +213,7 @@ func process_feed_url(save_path string, feed_url string, max_items int) {
 	}
 }
 
-func print_help() {
+func printHelp() {
 	fmt.Println("Usage: grenis-rss")
 	fmt.Println("  -h, --help: Show this help message")
 	fmt.Println("  -mi, --max-items [integer]: Maximum number of items to download")
@@ -201,35 +222,35 @@ func print_help() {
 }
 
 func main() {
-	create_default_config()
-	max_items := 1 // Default to only taking the most recent episode
+	createDefaultConfig()
+	maxItems := 1 // Default to only taking the most recent episode
 
 	args := os.Args
 	for i, arg := range args {
 		if arg == "-h" || arg == "--help" {
-			print_help()
+			printHelp()
 			return
 		}
 		if arg == "-mi" || arg == "--max-items" {
 			ic, err := strconv.Atoi(args[i+1])
 			if err != nil {
 				fmt.Println("Invalid max items value:", args[i+1])
-				print_help()
+				printHelp()
 				return
 			}
 
-			max_items = ic
+			maxItems = ic
 		}
 	}
 
-	feed_config, err := read_feeds_config()
+	feedConfig, err := readFeedsConfig()
 	if err != nil {
 		fmt.Println("Failed to read config file:", err)
-		print_help()
+		printHelp()
 		return
 	}
 
-	feedPath := makeAbsolute(feed_config.Path)
+	feedPath := makeAbsolute(feedConfig.Path)
 
 	// Make sure our output root exists
 	err = os.MkdirAll(feedPath, os.FileMode.Perm(0755))
@@ -237,25 +258,29 @@ func main() {
 		panic(err)
 	}
 
-	if len(feed_config.FeedItems) < 1 {
+	if len(feedConfig.FeedItems) < 1 {
 		fmt.Println("No feeds configured")
-		print_help()
+		printHelp()
 		return
 	}
 
 	var wg sync.WaitGroup
 
-	for _, feed_item := range feed_config.FeedItems {
+	for _, feedItem := range feedConfig.FeedItems {
 		wg.Add(1)
 
-		fmt.Println("Starting to process feed:", feed_item.Name)
-		folder_name := feedPath + "/" + feed_item.Name
-		os.MkdirAll(folder_name, os.FileMode.Perm(0755))
+		fmt.Println("Starting to process feed:", feedItem.Name)
+		folderName := feedPath + "/" + feedItem.Name
+		err := os.MkdirAll(folderName, os.FileMode.Perm(0755))
+		if err != nil {
+			panic(err)
+			return
+		}
 
 		go func(url string, items int) {
 			defer wg.Done()
-			process_feed_url(folder_name, url, items)
-		}(feed_item.FeedURL, max_items)
+			processFeedUrl(folderName, url, items)
+		}(feedItem.FeedURL, maxItems)
 	}
 
 	wg.Wait()
